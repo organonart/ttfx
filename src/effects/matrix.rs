@@ -148,7 +148,8 @@ impl RainColumn {
             ctx.terminal.set_character_visibility(character, false);
             self.pending_characters.push(character);
             let ch = &mut ctx.terminal.arena[character.0 as usize];
-            ch.motion.current_coord = ch.input_coord;
+            let input_coord = ch.input_coord;
+            ch.motion.set_coordinate(input_coord);
         }
         self.visible_characters = Vec::new();
         self.base_rain_fall_delay = if self.phase == ColumnPhase::Fill {
@@ -194,7 +195,7 @@ impl RainColumn {
             let new_coord = {
                 let motion = &mut ctx.terminal.arena[character.0 as usize].motion;
                 let current = motion.current_coord;
-                motion.current_coord = Coord::new(current.column, current.row - 1);
+                motion.set_coordinate(Coord::new(current.column, current.row - 1));
                 motion.current_coord
             };
             if new_coord.row < canvas_bottom {
