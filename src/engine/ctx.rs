@@ -20,7 +20,7 @@ use crate::engine::events::{CallerKey, CallerRef, EffectCallback, Event, EventAc
 use crate::engine::motion::Segment;
 use crate::engine::motion::Waypoint;
 use crate::engine::terminal::{Terminal, TerminalConfig};
-use crate::utils::geometry::{self, Coord};
+use crate::utils::geometry;
 use crate::utils::pycompat::round_half_even;
 use crate::utils::rng::Rng;
 
@@ -194,7 +194,7 @@ impl EngineCtx {
                     self.terminal.arena[id.0 as usize].layer = layer;
                 }
                 EventAction::SetCoordinate(coord) => {
-                    self.terminal.arena[id.0 as usize].motion.current_coord = coord;
+                    self.terminal.arena[id.0 as usize].motion.set_coordinate(coord);
                 }
                 EventAction::Callback(cb) => {
                     hooks.dispatch_callback(self, id, &cb);
@@ -300,7 +300,13 @@ impl EngineCtx {
     ///
     /// The path's slot is resolved once and re-resolved after every emission,
     /// since only a reentrant action can move or drop it.
-    fn path_step(&mut self, hooks: &mut dyn EffectHooks, id: CharId, path_id: &str) -> Coord {
+    ///
+    /// Returns the point BEFORE rounding — `(column, row)` as f64. Python
+    /// rounds inside `find_coord_on_line` and the float is gone; here the
+    /// caller (`motion_move`) rounds it into `current_coord` and keeps the
+    /// float as `current_pos`. The rounding is the same banker's rounding at
+    /// the same moment, so every emitted frame is unchanged.
+    fn path_step(&mut self, hooks: &mut dyn EffectHooks, id: CharId, path_id: &str) -> (f64, f64) {
         let mut slot =
             self.terminal.arena[id.0 as usize].motion.paths.slot(path_id).expect("path_step: path removed mid-step");
         macro_rules! path {
@@ -326,7 +332,8 @@ impl EngineCtx {
         let mut distance_to_travel = {
             let p = path_mut!();
             if p.max_steps == 0 || p.current_step >= p.max_steps || p.total_distance == 0.0 {
-                return p.segments.last().expect("path has no segments").end.coord;
+                let end = p.segments.last().expect("path has no segments").end.coord;
+                return (end.column as f64, end.row as f64);
             }
             p.current_step += 1;
             let ratio = p.current_step as f64 / p.max_steps as f64;
@@ -411,8 +418,8 @@ impl EngineCtx {
             (distance_to_travel / seg_distance).min(1.0)
         };
         match &seg.end.bezier_control {
-            Some(control) => geometry::find_coord_on_bezier_curve(seg.start.coord, control, seg.end.coord, t),
-            None => geometry::find_coord_on_line(seg.start.coord, seg.end.coord, t),
+            Some(control) => geometry::find_point_on_bezier_curve(seg.start.coord, control, seg.end.coord, t),
+            None => geometry::find_point_on_line(seg.start.coord, seg.end.coord, t),
         }
     }
 
@@ -431,8 +438,8 @@ impl EngineCtx {
         }) else {
             return;
         };
-        let new_coord = self.path_step(hooks, id, &path_id);
-        self.terminal.arena[id.0 as usize].motion.current_coord = new_coord;
+        let new_pos = self.path_step(hooks, id, &path_id);
+        self.terminal.arena[id.0 as usize].motion.set_position(new_pos);
 
         // Python re-reads self.active_path after step (a callback may have
         // swapped it); None here would be an upstream AttributeError.

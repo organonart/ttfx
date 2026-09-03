@@ -143,8 +143,19 @@ pub fn extrapolate_along_ray(origin: Coord, target: Coord, offset_from_target: f
 /// find_coord_on_bezier_curve: recursive De Casteljau of arbitrary degree with
 /// float intermediates, rounded only at the end.
 pub fn find_coord_on_bezier_curve(start: Coord, control: &[Coord], end: Coord, t: f64) -> Coord {
+    let (column, row) = find_point_on_bezier_curve(start, control, end, t);
+    Coord::new(round_half_even(column), round_half_even(row))
+}
+
+/// The point `find_coord_on_bezier_curve` rounds, before it is rounded:
+/// `(column, row)` as f64 in the same 1-based bottom-left frame as `Coord`.
+/// Upstream has no such function — the pre-rounded point exists there for one
+/// expression and is gone. It is exposed so a renderer with sub-cell
+/// resolution can place a character where the path actually put it; the
+/// rounded result is untouched, which is what keeps every frame byte-identical.
+pub fn find_point_on_bezier_curve(start: Coord, control: &[Coord], end: Coord, t: f64) -> (f64, f64) {
     if control.is_empty() {
-        return find_coord_on_line(start, end, t);
+        return find_point_on_line(start, end, t);
     }
 
     let start = FloatPoint { column: start.column as f64, row: start.row as f64 };
@@ -155,7 +166,7 @@ pub fn find_coord_on_bezier_curve(start: Coord, control: &[Coord], end: Coord, t
     if let [control] = control {
         let control = FloatPoint { column: control.column as f64, row: control.row as f64 };
         let point = start.interpolate(control, t).interpolate(control.interpolate(end, t), t);
-        return Coord::new(round_half_even(point.column), round_half_even(point.row));
+        return (point.column, point.row);
     }
 
     let mut points: Vec<FloatPoint> = Vec::with_capacity(control.len() + 2);
@@ -171,14 +182,21 @@ pub fn find_coord_on_bezier_curve(start: Coord, control: &[Coord], end: Coord, t
         }
         remaining -= 1;
     }
-    Coord::new(round_half_even(points[0].column), round_half_even(points[0].row))
+    (points[0].column, points[0].row)
 }
 
 /// find_coord_on_line: lerp + round.
 pub fn find_coord_on_line(start: Coord, end: Coord, t: f64) -> Coord {
+    let (x, y) = find_point_on_line(start, end, t);
+    Coord::new(round_half_even(x), round_half_even(y))
+}
+
+/// The lerp `find_coord_on_line` rounds, before it is rounded (see
+/// `find_point_on_bezier_curve`).
+pub fn find_point_on_line(start: Coord, end: Coord, t: f64) -> (f64, f64) {
     let x = (1.0 - t) * start.column as f64 + t * end.column as f64;
     let y = (1.0 - t) * start.row as f64 + t * end.row as f64;
-    Coord::new(round_half_even(x), round_half_even(y))
+    (x, y)
 }
 
 /// find_length_of_bezier_curve: 10-sample polyline that stops at t=0.9 — the

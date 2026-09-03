@@ -155,8 +155,20 @@ impl Path {
 #[derive(Debug, Clone)]
 pub struct Motion {
     pub paths: OrderedMap<Path>,
+    /// Where the character is, in cells. Every consumer upstream reads this
+    /// and nothing here changes how it is computed. Write it through
+    /// `set_coordinate` / `set_position` so `current_pos` stays in step.
     pub current_coord: Coord,
     pub previous_coord: Coord,
+    /// `current_coord` before rounding: `(column, row)` as f64 in the same
+    /// 1-based bottom-left frame. Along a path this is the exact point
+    /// `path_step` computed (`current_coord` is its banker's rounding, so the
+    /// two differ by at most half a cell on each axis); after a
+    /// `set_coordinate` it is the integer coordinate's exact value. A terminal
+    /// cannot use it — the cell is the atom there — but a renderer that draws
+    /// each character as a tile under a camera can, and without it every path
+    /// reads as stepping. Additive: no frame ttfx emits depends on it.
+    pub current_pos: (f64, f64),
     pub active_path: Option<Rc<str>>,
     pub completed_path: Option<Rc<str>>,
 }
@@ -167,13 +179,37 @@ impl Motion {
             paths: OrderedMap::new(),
             current_coord: input_coord,
             previous_coord: Coord::new(-1, -1),
+            current_pos: (input_coord.column as f64, input_coord.row as f64),
             active_path: None,
             completed_path: None,
         }
     }
 
+    /// Motion.set_coordinate: place the character on a cell. The pre-rounded
+    /// position becomes that cell exactly — a placement has no remainder.
     pub fn set_coordinate(&mut self, coord: Coord) {
         self.current_coord = coord;
+        self.current_pos = (coord.column as f64, coord.row as f64);
+    }
+
+    /// Place the character at a pre-rounded point: `current_pos` takes it as
+    /// given and `current_coord` takes its banker's rounding, the way
+    /// `find_coord_on_line` / `find_coord_on_bezier_curve` round. This is the
+    /// only way the two fields are ever set from a float, so
+    /// `round_half_even(current_pos) == current_coord` holds by construction.
+    pub fn set_position(&mut self, pos: (f64, f64)) {
+        self.current_coord = Coord::new(round_half_even(pos.0), round_half_even(pos.1));
+        self.current_pos = pos;
+    }
+
+    /// `current_pos - current_coord`: the sub-cell remainder in cells, each
+    /// axis in `-0.5..=0.5` (exactly `±0.5` only at a banker's-rounding tie).
+    /// Zero after any `set_coordinate`.
+    pub fn sub_cell(&self) -> (f64, f64) {
+        (
+            self.current_pos.0 - self.current_coord.column as f64,
+            self.current_pos.1 - self.current_coord.row as f64,
+        )
     }
 
     /// Motion.new_path: auto-id probing; duplicate explicit id errors.
